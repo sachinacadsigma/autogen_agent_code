@@ -55,9 +55,7 @@ jobs:
       - name: Unzip artifact for deployment
         run: unzip release.zip
 
-      - name: Set Streamlit Run Command in Azure
-        run: |
-          az webapp config set --name autocode --resource-group <YOUR_RESOURCE_GROUP> --startup-file "streamlit run app.py --server.port 8000 --server.address 0.0.0.0"
+    
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3  # Updated to v3
