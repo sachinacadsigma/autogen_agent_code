@@ -1,6 +1,8 @@
 import openai
 import sys
 import json
+import os
+from pathlib import Path
 
 # Hardcoded Azure OpenAI credentials
 openai.api_key = "2f6e41aa534f49908feb01c6de771d6b"  # Replace with actual API key
@@ -8,7 +10,7 @@ openai.api_base = "https://ea-oai-sandbox.openai.azure.com/"  # Replace with Azu
 openai.api_version = "2024-05-01-preview"
 deployment_name = "AllegisGPT-4o"  # Replace with your deployment name
 
-def review_code(code):
+def review_code(code, filename):
     client = openai.AzureOpenAI(
         api_key=openai.api_key,
         api_version=openai.api_version,
@@ -42,7 +44,7 @@ def review_code(code):
                 "recommendations": "No critical issues detected."
             }
             """},
-            {"role": "user", "content": f"Review this Python code:\n{code}"}
+            {"role": "user", "content": f"Review this Python code from {filename}:\n{code}"}
         ],
         temperature=0,
         max_tokens=500
@@ -50,30 +52,46 @@ def review_code(code):
 
     return response.choices[0].message.content  # Corrected response handling
 
-# Read the latest code
-with open("main.py", "r") as file:
-    code = file.read()
+# Get all Python files in the current directory and subdirectories
+python_files = list(Path(".").rglob("*.py"))
 
-# Get AI review comments
-review_output = review_code(code)
+if not python_files:
+    print("⚠️ No Python files found for review.")
+    sys.exit(0)  # No files, exit successfully
 
-# Save raw output
-with open("review_output.json", "w") as f:
-    f.write(review_output)
+critical_issues_found = False
+review_results = {}
 
-# Print raw output for debugging
-print("🔍 AI Response:")
-print(review_output)
+# Review each file
+for py_file in python_files:
+    with open(py_file, "r", encoding="utf-8") as file:
+        code = file.read()
+    
+    print(f"🔍 Reviewing {py_file} ...")
+    review_output = review_code(code, py_file)
 
-# Parse JSON output
-try:
-    review_data = json.loads(review_output)
-    if review_data.get("critical_issues", False):  # If critical_issues is True
-        print("❌ Critical issues detected! Stopping the build.")
-        sys.exit(1)  # Fail the pipeline
-    else:
-        print("✅ No critical issues found. Proceeding with build.")
-except json.JSONDecodeError:
-    print("⚠️ Error: LLM did not return valid JSON. Here is the raw response:")
-    print(review_output)  # Print for debugging
-    sys.exit(1)  # Fail pipeline if LLM response is not valid JSON
+    # Save review output for each file
+    review_results[str(py_file)] = review_output
+
+    # Save raw output
+    output_filename = f"review_output_{py_file.name}.json"
+    with open(output_filename, "w", encoding="utf-8") as f:
+        f.write(review_output)
+
+    # Parse JSON output
+    try:
+        review_data = json.loads(review_output)
+        if review_data.get("critical_issues", False):  # If critical_issues is True
+            print(f"❌ Critical issues detected in {py_file}! Stopping the build.")
+            critical_issues_found = True
+    except json.JSONDecodeError:
+        print(f"⚠️ Error: LLM did not return valid JSON for {py_file}.")
+        print(review_output)  # Print for debugging
+        critical_issues_found = True
+
+# Stop pipeline if any critical issues were found
+if critical_issues_found:
+    sys.exit(1)  # Fail the pipeline
+
+print("✅ No critical issues found in any Python file. Proceeding with build.")
+sys.exit(0)  # Exit successfully
