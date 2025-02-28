@@ -18,7 +18,7 @@ def init_saml_auth(req, saml_path):
     print('In init auth')
     auth = OneLogin_Saml2_Auth(req, custom_base_path=saml_path)
     return auth
-
+#test
 def prepare_flask_request(request):
     print('In Prepare Flask')
     url_data = request.url.split('?')
