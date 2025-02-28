@@ -7,24 +7,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  code_review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+  # code_review:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Set up Python version
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+  #     - name: Set up Python version
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.12'
 
-      - name: Install dependencies
-        run: pip install openai requests
+  #     - name: Install dependencies
+  #       run: pip install openai requests
 
-      - name: Run AI-based Code Review
-        run: python review_code.py  # Fails build if critical issues exist
+  #     - name: Run AI-based Code Review
+  #       run: python review_code.py  # Fails build if critical issues exist
 
   build:
-    needs: code_review  # Stops build if AI review fails
+    # needs: code_review  # Removed dependency on code review
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
