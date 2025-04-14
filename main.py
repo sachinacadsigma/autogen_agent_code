@@ -13,70 +13,99 @@ executor = LocalCommandLineCodeExecutor(
     work_dir="coding",
 )
 
-# Hardcoded credentials (VERY STRONGLY DISCOURAGED for production)
-azure_deployment_name = "AllegisGPT-4o"  # Replace with your deployment name
-model = "gpt-4"  # Replace with your base model name (e.g. gpt-4, gpt-3.5-turbo)
+# Hardcoded credentials (for demo only; NEVER in production)
+azure_deployment_name = "AllegisGPT-4o"
+model = "gpt-4"
 temperature = 0
-openai_api_key = "2f6e41aa534f49908feb01c6de771d6b"  # Replace with your actual API key
-openai_api_base = "https://ea-oai-sandbox.openai.azure.com/"  # Replace with your Azure endpoint URL
-openai_api_version = "2024-05-01-preview"  # Replace with your API version
+openai_api_key = "2f6e41aa534f49908feb01c6de771d6b"
+openai_api_base = "https://ea-oai-sandbox.openai.azure.com/"
+openai_api_version = "2024-05-01-preview"
 
 llm_config = {
     "api_type": "azure",
     "api_version": openai_api_version,
     "azure_endpoint": openai_api_base,
     "api_key": openai_api_key,
-    "model": azure_deployment_name, # Set model to deployment name
+    "model": azure_deployment_name,
     "temperature": temperature,
 }
 
-def generate_chat_history(problem_statement):
-    """
-    Executes code based on the given problem statement using AutoGen agents and returns the chat history.
-    """
-    code_executor_agent = ConversableAgent(
-        name="code_executor_agent",
-        llm_config=False,
-        code_execution_config={"executor": executor},
-        human_input_mode="NEVER"
-    )
+# Agents
+code_executor_agent = ConversableAgent(
+    name="code_executor_agent",
+    llm_config=False,
+    code_execution_config={"executor": executor},
+    human_input_mode="NEVER"
+)
 
-    code_writer_agent = AssistantAgent(
-        name="code_writer_agent",
-        llm_config=llm_config,
-        code_execution_config=False,
-        human_input_mode="NEVER",
-    )
-
-    chat_result = code_executor_agent.initiate_chat(
-        code_writer_agent,
-        message=problem_statement,
-    )
-
-    return chat_result.chat_history
+code_writer_agent = AssistantAgent(
+    name="code_writer_agent",
+    llm_config=llm_config,
+    code_execution_config=False,
+    human_input_mode="NEVER",
+)
 
 def process_chat_history(chat_history):
     """
-    Processes the chat history to extract the most recent code details.
+    Processes the chat history to extract final code and explanation.
     """
     x = pprint.pformat(chat_history)
 
-    agent = ConversableAgent(
+    parser_agent = ConversableAgent(
         name="chatbot",
         llm_config=llm_config,
         human_input_mode="NEVER",
         system_message="""You are an agent who will parse the given chat history and return the most recent code
-        along with a neat description and requirements of the code. Answer format should include fields: code (neatly indented), requirements, and description."""
+        along with a neat description and requirements of the code. Answer format should include fields: 
+        code (neatly indented), requirements, and description."""
     )
 
-    reply = agent.generate_reply(
-        messages=[{"content": x, "role": "user"}]
-    )
+    reply = parser_agent.generate_reply(messages=[{"content": x, "role": "user"}])
 
-    # Ensure proper extraction of response
     if isinstance(reply, list) and reply:
         return reply[-1].get("content", reply[-1]) if isinstance(reply[-1], dict) else reply[-1]
     return reply
+
+def generate_function_then_api(problem_statement):
+    """
+    First generate internal function logic, test it, then wrap it in a Flask API.
+    Returns both blocks: function + Flask API.
+    """
+    # PHASE 1: Generate Internal Function Only
+    logic_prompt = f"""
+    Create only the core function logic for the following problem.
+    Do NOT create an API. Just return the function. Do not wrap it in main or add UI code.
+
+    Problem: {problem_statement}
+    """
+    logic_chat = code_executor_agent.initiate_chat(code_writer_agent, message=logic_prompt)
+    logic_response = process_chat_history(logic_chat)
+
+    # PHASE 2: Wrap in API
+    api_prompt = f"""
+    Now wrap the following function into a Flask API. Return only two sections:
+    1. Internal Function (clean and tested)
+    2. Flask API Code
+
+    python
+    {logic_response}
+    
+    """
+    api_chat = code_writer_agent.initiate_chat(code_writer_agent, message=api_prompt)
+    api_response = process_chat_history(api_chat)
+
+    return {
+        "function_logic": logic_response,  # Return function logic as a separate part
+        "flask_api_code": api_response,    # Return Flask API code
+    }
+
+
+def generate_regular_code(problem_statement):
+    """
+    Default code generation flow when API is not mentioned.
+    """
+    chat_result = code_executor_agent.initiate_chat(code_writer_agent, message=problem_statement)
+    return process_chat_history(chat_result)
 
 def cleanup_directory(directory, keep_recent=False):
     """Cleans up a directory, optionally keeping the most recent file."""
@@ -97,21 +126,36 @@ def cleanup_directory(directory, keep_recent=False):
         st.error(f"Error during cleanup: {e}")
 
 # Streamlit UI
-st.title("Code Generation and Analysis")
+st.title("AutoCode")
+st.markdown("""
+Hi! I'm AutoCode, your personal coding assistant.
+**Happy coding!** 
+""")
+
 
 problem_statement = st.text_area("Enter your problem statement:", height=150)
 
-if st.button("Generate and Process"):
+if st.button("Generate Code"):
     if problem_statement:
-        with st.spinner("Generating and processing..."):
+        with st.spinner("Working on it..."):
             try:
-                chat_history = generate_chat_history(problem_statement)
-                response = process_chat_history(chat_history)
-                st.write(response)
+                # Check if user asked for API
+                if "api" in problem_statement.lower():
+                    response = generate_function_then_api(problem_statement)
 
-                output_directory = "./coding"
-                cleanup_directory(output_directory, keep_recent=False)
+                    # Display the logic and Flask API code separately
+                    st.markdown("### ✅ Generated Internal Function Logic")
+                    st.code(response["function_logic"], language="python")
+
+                    st.markdown("### ✅ Generated Flask API Code")
+                    st.code(response["flask_api_code"], language="python")
+                else:
+                    response = generate_regular_code(problem_statement)
+                    st.markdown("### ✅ Generated Code")
+                    st.code(response, language="python")
+
+                cleanup_directory("./coding", keep_recent=False)
             except Exception as e:
-                st.error(f"An error occurred: {e}")
+                st.error(f"❌ An error occurred: {e}")
     else:
-        st.warning("Please enter a problem statement.")
+        st.warning("⚠️ Please enter a problem statement.")
