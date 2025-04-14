@@ -13,19 +13,21 @@ executor = LocalCommandLineCodeExecutor(
     work_dir="coding",
 )
 
-# Hardcoded credentials (for demo only; NEVER in production)
-azure_deployment_name = "AllegisGPT-4o"
-model = "gpt-4"
+
+# Hardcoded credentials (VERY STRONGLY DISCOURAGED for production)
+azure_deployment_name = "AllegisGPT-4o"  # Replace with your deployment name
+model = "gpt-4"  # Replace with your base model name (e.g. gpt-4, gpt-3.5-turbo)
 temperature = 0
-openai_api_key = "2f6e41aa534f49908feb01c6de771d6b"
-openai_api_base = "https://ea-oai-sandbox.openai.azure.com/"
-openai_api_version = "2024-05-01-preview"
+openai_api_key = "2f6e41aa534f49908feb01c6de771d6b"  # Replace with your actual API key
+openai_api_base = "https://ea-oai-sandbox.openai.azure.com/"  # Replace with your Azure endpoint URL
+openai_api_version = "2024-05-01-preview"  # Replace with your API version
 
 llm_config = {
     "api_type": "azure",
     "api_version": openai_api_version,
+    "azure_endpoint": openai_api_base,
     "api_key": openai_api_key,
-    "model": azure_deployment_name,
+    "model": azure_deployment_name, # Set model to deployment name
     "temperature": temperature,
 }
 
