@@ -127,13 +127,17 @@ def cleanup_directory(directory, keep_recent=False):
         st.error(f"Error during cleanup: {e}")
 
 # Streamlit UI
-st.title("🧠 AutoGen Code Generator & API Builder")
+st.title("AutoCode")
+st.markdown("""
+Hi! I'm AutoCode, your personal coding assistant.
+**Happy coding!** 
+""")
 
-problem_statement = st.text_area("🔧 Enter your problem statement:", height=150)
+problem_statement = st.text_area("Enter your problem statement:", height=150)
 
-if st.button("🚀 Generate Code"):
+if st.button("Generate Code"):
     if problem_statement:
-        with st.spinner("⏳ Working on it..."):
+        with st.spinner("Working on it..."):
             try:
                 # Check if user asked for API
                 if "api" in problem_statement.lower():
