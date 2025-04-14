@@ -25,7 +25,7 @@ openai_api_version = "2024-05-01-preview"  # Replace with your API version
 llm_config = {
     "api_type": "azure",
     "api_version": openai_api_version,
-    "azure_endpoint": openai_api_base,
+    "base_url": openai_api_base,
     "api_key": openai_api_key,
     "model": azure_deployment_name, # Set model to deployment name
     "temperature": temperature,
