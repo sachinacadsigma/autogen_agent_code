@@ -1,26 +1,20 @@
 import streamlit as st
 import os
 import glob
-import shutil
-import datetime
 import pprint
 from autogen import ConversableAgent, AssistantAgent
 from autogen.coding import LocalCommandLineCodeExecutor
 
-# Initialize Code Executor
-executor = LocalCommandLineCodeExecutor(
-    timeout=60,
-    work_dir="coding",
-)
+# Executor setup
+executor = LocalCommandLineCodeExecutor(timeout=60, work_dir="coding")
 
-
-# Hardcoded credentials (VERY STRONGLY DISCOURAGED for production)
-azure_deployment_name = "AllegisGPT-4o"  # Replace with your deployment name
-model = "gpt-4"  # Replace with your base model name (e.g. gpt-4, gpt-3.5-turbo)
+# Azure OpenAI config
+azure_deployment_name = "AllegisGPT-4o"
+model = "gpt-4"
 temperature = 0
-openai_api_key = "2f6e41aa534f49908feb01c6de771d6b"  # Replace with your actual API key
-openai_api_base = "https://ea-oai-sandbox.openai.azure.com/"  # Replace with your Azure endpoint URL
-openai_api_version = "2024-05-01-preview"  # Replace with your API version
+openai_api_key = "2f6e41aa534f49908feb01c6de771d6b"
+openai_api_base = "https://ea-oai-sandbox.openai.azure.com/"
+openai_api_version = "2024-05-01-preview"
 
 llm_config = {
     "api_type": "azure",
@@ -46,116 +40,97 @@ code_writer_agent = AssistantAgent(
     human_input_mode="NEVER",
 )
 
+# Helper: Parse chat history
 def process_chat_history(chat_history):
-    """
-    Processes the chat history to extract final code and explanation.
-    """
     x = pprint.pformat(chat_history)
-
     parser_agent = ConversableAgent(
         name="chatbot",
         llm_config=llm_config,
         human_input_mode="NEVER",
-        system_message="""You are an agent who will parse the given chat history and return the most recent code
-        along with a neat description and requirements of the code. Answer format should include fields: 
-        code (neatly indented), requirements, and description."""
+        system_message="""You are an agent who parses the chat history and returns the most recent code,
+        requirements, and description. Output must include 'code', 'requirements', and 'description'. The code should be clean and Pythonic."""
     )
-
     reply = parser_agent.generate_reply(messages=[{"content": x, "role": "user"}])
-
     if isinstance(reply, list) and reply:
         return reply[-1].get("content", reply[-1]) if isinstance(reply[-1], dict) else reply[-1]
     return reply
 
-def generate_function_then_api(problem_statement):
+# Main Code Generator
+def generate_code(problem_statement):
+    refined_prompt = f"""
+    APIs are not in scope. If the user mentions APIs, generate only the core logic, without any Flask or FastAPI or routing code.
+    If the problem is complex, break it down into helper functions.
+    Only return logic, no API code, no UI code.
+
+    Problem:
+    {problem_statement}
     """
-    First generate internal function logic, test it, then wrap it in a Flask API.
-    Returns both blocks: function + Flask API.
-    """
-    # PHASE 1: Generate Internal Function Only
-    logic_prompt = f"""
-    Create only the core function logic for the following problem.
-    Do NOT create an API. Just return the function. Do not wrap it in main or add UI code.
+    chat = code_executor_agent.initiate_chat(code_writer_agent, message=refined_prompt)
+    return process_chat_history(chat)
 
-    Problem: {problem_statement}
-    """
-    logic_chat = code_executor_agent.initiate_chat(code_writer_agent, message=logic_prompt)
-    logic_response = process_chat_history(logic_chat)
-
-    # PHASE 2: Wrap in API
-    api_prompt = f"""
-    Now wrap the following function into a Flask API. Return only two sections:
-    1. Internal Function (clean and tested)
-    2. Flask API Code
-
-    python
-    {logic_response}
-    
-    """
-    api_chat = code_writer_agent.initiate_chat(code_writer_agent, message=api_prompt)
-    api_response = process_chat_history(api_chat)
-
-    return {
-        "function_logic": logic_response,  # Return function logic as a separate part
-        "flask_api_code": api_response,    # Return Flask API code
-    }
-
-
-def generate_regular_code(problem_statement):
-    """
-    Default code generation flow when API is not mentioned.
-    """
-    chat_result = code_executor_agent.initiate_chat(code_writer_agent, message=problem_statement)
-    return process_chat_history(chat_result)
-
+# Cleanup
 def cleanup_directory(directory, keep_recent=False):
-    """Cleans up a directory, optionally keeping the most recent file."""
     try:
         files = glob.glob(os.path.join(directory, "*.py"))
-        if not files:
-            return
-
         if keep_recent:
             file_times = sorted([(f, os.path.getmtime(f)) for f in files], key=lambda x: x[1])
             files_to_delete = [f for f, _ in file_times[:-1]]
         else:
             files_to_delete = files
-
         for file_path in files_to_delete:
             os.remove(file_path)
     except Exception as e:
-        st.error(f"Error during cleanup: {e}")
+        st.error(f"Cleanup failed: {e}")
 
 # Streamlit UI
-st.title("AutoCode")
+st.set_page_config(page_title="AutoCode", layout="wide")
+st.title("AutoCode - Your Smart Coding Assistant")
+
 st.markdown("""
-Hi! I'm AutoCode, your personal coding assistant.
-**Happy coding!** 
+Welcome to **AutoCode**   
+- Converts problem statements into Python code  
 """)
 
-problem_statement = st.text_area("Enter your problem statement:", height=150)
+problem_statement = st.text_area("📌 Enter your problem statement:", height=150)
 
-if st.button("Generate Code"):
-    if problem_statement:
-        with st.spinner("Working on it..."):
+# Track confirmation
+generate_logic = st.session_state.get("generate_logic", False)
+confirmed_api_logic = st.session_state.get("confirmed_api_logic", False)
+
+# Check if API mentioned
+api_detected = "api" in problem_statement.lower()
+
+if st.button("🚀 Generate Code"):
+    if not problem_statement.strip():
+        st.warning("⚠️ Please enter a problem statement.")
+    elif api_detected and not confirmed_api_logic:
+        st.session_state.confirmed_api_logic = True
+        st.warning("⚠️ APIs are currently out of scope. Do you still want to generate just the core logic (no API)?")
+        st.session_state.show_confirm_button = True
+    else:
+        with st.spinner("🧠 Thinking and generating..."):
             try:
-                # Check if user asked for API
-                if "api" in problem_statement.lower():
-                    response = generate_function_then_api(problem_statement)
-
-                    # Display the logic and Flask API code separately
-                    st.markdown("### ✅ Generated Internal Function Logic")
-                    st.code(response["function_logic"], language="python")
-
-                    st.markdown("### ✅ Generated Flask API Code")
-                    st.code(response["flask_api_code"], language="python")
-                else:
-                    response = generate_regular_code(problem_statement)
-                    st.markdown("### ✅ Generated Code")
-                    st.code(response, language="python")
-
+                response = generate_code(problem_statement)
+                st.markdown("### ✅ Generated Python Code")
+                st.code(response, language="python")
                 cleanup_directory("./coding", keep_recent=False)
             except Exception as e:
-                st.error(f"❌ An error occurred: {e}")
-    else:
-        st.warning("⚠️ Please enter a problem statement.")
+                st.error(f"❌ Error: {e}")
+
+# Confirm logic generation for API-based input
+if st.session_state.get("show_confirm_button", False):
+    if st.button("✅ Yes, generate core logic"):
+        st.session_state.confirmed_api_logic = False
+        st.session_state.show_confirm_button = False
+        with st.spinner("🧠 Thinking and generating core logic..."):
+            try:
+                response = generate_code(problem_statement)
+                st.markdown("### ✅ Generated Core Logic (API-free)")
+                st.code(response, language="python")
+                cleanup_directory("./coding", keep_recent=False)
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+    elif st.button("❌ No, cancel"):
+        st.session_state.confirmed_api_logic = False
+        st.session_state.show_confirm_button = False
+        st.info("API-based problem skipped. Please enter a new one.")
