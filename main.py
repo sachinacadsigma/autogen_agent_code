@@ -1,9 +1,21 @@
 import streamlit as st
+import psycopg2
+from autogen import ConversableAgent, AssistantAgent
+from autogen.coding import LocalCommandLineCodeExecutor
 import os
 import glob
 import pprint
-from autogen import ConversableAgent, AssistantAgent
-from autogen.coding import LocalCommandLineCodeExecutor
+
+# Database connection
+def get_db_connection():
+    conn = psycopg2.connect(
+        host="aws-0-ap-southeast-1.pooler.supabase.com",
+        port="5432",
+        dbname="postgres",
+        user="postgres.gdpjagpvnnvazhhhgpzc",
+        password="1234"
+    )
+    return conn
 
 # Executor setup
 executor = LocalCommandLineCodeExecutor(timeout=60, work_dir="coding")
@@ -48,7 +60,7 @@ def process_chat_history(chat_history):
         llm_config=llm_config,
         human_input_mode="NEVER",
         system_message="""You are an agent who parses the chat history and returns the most recent code,
-        requirements, and description. Output must include 'code', 'requirements', and 'description'. The code should be clean and Pythonic."""
+        requirements, and description. Output must include 'code', 'requirements', and 'description'. The code should be clean and Pythonic.""" 
     )
     reply = parser_agent.generate_reply(messages=[{"content": x, "role": "user"}])
     if isinstance(reply, list) and reply:
@@ -86,51 +98,91 @@ def cleanup_directory(directory, keep_recent=False):
 st.set_page_config(page_title="AutoCode", layout="wide")
 st.title("AutoCode - Your Smart Coding Assistant")
 
-st.markdown("""
-Welcome to **AutoCode**   
-- Converts problem statements into Python code  
-""")
+st.markdown("""Welcome to *AutoCode*   
+- Converts problem statements into Python code""")
 
-problem_statement = st.text_area("📌 Enter your problem statement:", height=150)
+# User login
+def user_login(username, password):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username = %s AND password = %s", (username, password))
+    user = cursor.fetchone()
+    if user:
+        return True
+    return False
 
-# Track confirmation
-generate_logic = st.session_state.get("generate_logic", False)
-confirmed_api_logic = st.session_state.get("confirmed_api_logic", False)
+# Register new user
+def register_user(username, password):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, password))
+    conn.commit()
 
-# Check if API mentioned
-api_detected = "api" in problem_statement.lower()
+# UI for login
+username = st.text_input("Username")
+password = st.text_input("Password", type="password")
 
-if st.button("🚀 Generate Code"):
-    if not problem_statement.strip():
-        st.warning("⚠️ Please enter a problem statement.")
-    elif api_detected and not confirmed_api_logic:
-        st.session_state.confirmed_api_logic = True
-        st.warning("⚠️ APIs are currently out of scope. Do you still want to generate just the core logic (no API)?")
-        st.session_state.show_confirm_button = True
+# Login form
+login_button = st.button("Login")
+if login_button:
+    if user_login(username, password):
+        st.session_state.username = username
+        st.success("Login successful!")
     else:
-        with st.spinner("🧠 Thinking and generating..."):
-            try:
-                response = generate_code(problem_statement)
-                st.markdown("### ✅ Generated Python Code")
-                st.code(response, language="python")
-                cleanup_directory("./coding", keep_recent=False)
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
+        st.error("Invalid credentials.")
 
-# Confirm logic generation for API-based input
-if st.session_state.get("show_confirm_button", False):
-    if st.button("✅ Yes, generate core logic"):
-        st.session_state.confirmed_api_logic = False
-        st.session_state.show_confirm_button = False
-        with st.spinner("🧠 Thinking and generating core logic..."):
-            try:
-                response = generate_code(problem_statement)
-                st.markdown("### ✅ Generated Core Logic (API-free)")
-                st.code(response, language="python")
-                cleanup_directory("./coding", keep_recent=False)
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
-    elif st.button("❌ No, cancel"):
-        st.session_state.confirmed_api_logic = False
-        st.session_state.show_confirm_button = False
-        st.info("API-based problem skipped. Please enter a new one.")
+# Sign up form
+sign_up_button = st.button("Sign Up")
+if sign_up_button:
+    if username and password:
+        register_user(username, password)
+        st.success("Sign up successful! You can now log in.")
+    else:
+        st.error("Please enter a valid username and password to sign up.")
+
+# Problem statement and code generation
+if 'username' in st.session_state:
+    problem_statement = st.text_area("📌 Enter your problem statement:", height=150)
+
+    if st.button("🚀 Generate Code"):
+        if not problem_statement.strip():
+            st.warning("⚠️ Please enter a problem statement.")
+        else:
+            with st.spinner("🧠 Thinking and generating..."):
+                try:
+                    response = generate_code(problem_statement)
+                    st.markdown("### ✅ Generated Python Code")
+                    st.code(response, language="python")
+                    # Save to log table
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO log (username, prompt, output) VALUES (%s, %s, %s)", 
+                                   (st.session_state.username, problem_statement, response))
+                    conn.commit()
+                    cleanup_directory("./coding", keep_recent=False)
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+
+   # Feedback (Thumbs up/down)
+thumbs = st.radio("Do you like the generated code?", ["👍", "👎"])
+if thumbs:
+    feedback_value = "positive" if thumbs == "👍" else "negative"
+    comments = ""
+    if feedback_value == "negative":
+        comments = st.text_area("Please provide a reason for thumbs down:", "")
+    
+    if st.button("Submit Feedback"):
+        # Save feedback in the same log table
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE log SET feedback = %s, comments = %s WHERE username = %s AND prompt = %s", 
+                (feedback_value, comments, st.session_state.username, problem_statement)
+            )
+            conn.commit()
+            st.success("Feedback submitted!")
+        except Exception as e:
+            st.error(f"Failed to submit feedback: {e}")
+else:
+    st.info("Please log in to start generating code.")
